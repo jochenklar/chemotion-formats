@@ -2,6 +2,7 @@ import warnings
 
 from nmrglue.fileio.jcampdx import _getkey, _parse_data
 
+# the keys in the JCAMPDX file which start a new data block
 DATASET_KEYS = [
     'XYDATA',
     'XYPOINTS',
@@ -12,12 +13,32 @@ DATASET_KEYS = [
     '$CSSIMULATIONPEAKS'
 ]
 
+# @type for JCAMPDX data types
+DATA_TYPE_TYPES = {
+    'NMR SPECTRUM': 'NMRSpectrum',
+    'NMRPEAKTABLE': 'NMRPeaktable',
+    'CYCLIC VOLTAMMETRY': 'CyclicVoltammetry'
+}
+
+# @type for JCAMPDX data class
+DATA_CLASS_TYPES = {
+    'XYDATA': 'XYData',
+    'XYPOINTS': 'XYPoints',
+    'PEAKTABLE': 'Peaktable',
+    '$OBSERVEDINTEGRALS': 'ObservedIntegrals',
+    '$OBSERVEDMULTIPLETS': 'ObservedMultiplets',
+    '$OBSERVEDMULTIPLETSPEAKS': 'ObservedMultipletsPeaks',
+    '$CSSIMULATIONPEAKS': 'CSSimulationPeaks'
+}
+
 
 def parse_key(string):
+    # parse a JCAMPDX key using nmrglues
     return _getkey(string)
 
 
 def parse_value(string):
+    # parse a value to a int, float or string (in this order)
     try:
         return int(string)
     except ValueError:
@@ -28,6 +49,7 @@ def parse_value(string):
 
 
 def parse_line(line):
+    # parse a line containing a tuple of values (in ascii)
     return [parse_value(value) for value in line.strip()
                                                 .strip('(')
                                                 .strip(')')
@@ -40,6 +62,7 @@ def parse_buffer(buffer):
 
 
 def read_blocks(file_path):
+    # read a JCAMPDX file line by line and return the different blocks
     blocks = []
     current_blocks = blocks
     current_block = None
@@ -127,3 +150,49 @@ def read_blocks(file_path):
                     current_dataset['data'].append(parse_line(line))
 
     return blocks
+
+
+def convert_blocks(blocks):
+    # convert the JCAMPDX blocks into jsonld recusively
+    items = []
+    for block in blocks:
+        items.append(convert_block(block))
+    return items
+
+
+def convert_block(block):
+    # convert one JCAMPDX block into jsonld
+    data_type = block['labeled_data_records']['DATATYPE']
+
+    if data_type == 'LINK':
+        item = {
+            '@type': 'Block',
+            'name': block['labeled_data_records']['TITLE'],
+            'blocks': []
+        }
+        for block in block['blocks']:
+            item['blocks'].append(convert_block(block))
+
+    elif data_type in DATA_TYPE_TYPES:
+        item = {
+            '@type': DATA_TYPE_TYPES[data_type],
+            'name': block['labeled_data_records']['TITLE']
+        }
+
+        for key in block['labeled_data_records'].keys():
+            if key not in ['TITLE', 'DATACLASS', 'DATATYPE', 'JCAMPDX']:
+                item[key.lower()] = block['labeled_data_records'][key]
+
+        for dataset in block['datasets']:
+            data_class = dataset['data_class']
+
+            if data_class in DATA_CLASS_TYPES:
+                if 'datasets' not in item:
+                    item['datasets'] = []
+
+                item['datasets'].append({
+                    '@type': DATA_CLASS_TYPES[data_class],
+                    'data': dataset['data']
+                })
+
+    return item
